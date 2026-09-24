@@ -50,6 +50,7 @@ def test_wrong_otp_reprompts_and_stays_locked(client):
     post(client, "/ivr/answer")
     body = post(client, "/ivr/otp/verify", Digits="0000")
     assert "incorrect" in body and 'numDigits="4"' in body
+    # Still locked out of the menu:
     assert "/ivr/otp/prompt" in post(client, "/ivr/language/prompt")
 
 
@@ -162,3 +163,22 @@ def test_normalize_number(raw, expected):
 def test_invalid_otp_rejected(bad):
     with pytest.raises(ConfigError):
         validate_otp(bad)
+
+
+def test_dashboard_is_local_only(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/", headers={"X-Forwarded-For": "203.0.113.5"}).status_code == 404
+    assert client.post("/api/call", json={}, headers={"X-Forwarded-For": "203.0.113.5"}).status_code == 404
+
+
+def test_api_call_rejects_invalid_number(client):
+    response = client.post("/api/call", json={"to": "12"})
+    assert response.status_code == 400 and response.get_json()["ok"] is False
+
+
+def test_timeline_records_each_step(client):
+    authenticate(client)
+    post(client, "/ivr/language/select", Digits="2")
+    kinds = [event["kind"] for event in client.get("/api/events").get_json()["events"]]
+    assert kinds == ["answered", "otp_ok", "language"]
+    assert client.get("/api/events?after=3").get_json()["events"] == []

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>InspireWorks Voice Console</title>
+<style>
+:root {
+  --bg: #0b1020;
+  --panel: #121a2f;
+  --panel-2: #18223c;
+  --line: #243152;
+  --text: #e8ecf7;
+  --muted: #8b97b5;
+  --accent: #5b8cff;
+  --accent-2: #8a5bff;
+  --ok: #2fd67b;
+  --warn: #ffb547;
+  --bad: #ff5d6c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(91,140,255,.18), transparent 60%),
+    radial-gradient(700px 400px at 100% 0%, rgba(138,91,255,.14), transparent 60%),
+    var(--bg);
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 48px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo {
+  width: 40px; height: 40px; border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: grid; place-items: center; box-shadow: 0 8px 24px rgba(91,140,255,.35);
+}
+.logo svg { width: 22px; height: 22px; }
+.brand h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); font-size: 13px; color: var(--muted);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.live .dot { background: var(--ok); box-shadow: 0 0 0 0 rgba(47,214,123,.6); animation: pulse 1.6s infinite; }
+.pill.live { color: var(--text); }
+@keyframes pulse { 70% { box-shadow: 0 0 0 8px rgba(47,214,123,0); } 100% { box-shadow: 0 0 0 0 rgba(47,214,123,0); } }
+.grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); margin: 0 0 16px; font-weight: 600; }
+label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 8px; }
+input {
+  width: 100%; padding: 13px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: #0d1428; color: var(--text); font-size: 16px; outline: none; transition: border-color .15s;
+}
+input:focus { border-color: var(--accent); }
+button {
+  width: 100%; margin-top: 14px; padding: 13px 16px; border: 0; border-radius: 12px; cursor: pointer;
+  font-size: 15px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: transform .1s, opacity .15s;
+}
+button:active { transform: scale(.98); }
+button:disabled { opacity: .6; cursor: progress; }
+.from { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.from b { color: var(--text); font-weight: 500; }
+.notice { margin-top: 14px; padding: 11px 13px; border-radius: 10px; font-size: 13px; display: none; word-break: break-word; }
+.notice.ok { display: block; background: rgba(47,214,123,.1); border: 1px solid rgba(47,214,123,.35); color: #b8f5d2; }
+.notice.bad { display: block; background: rgba(255,93,108,.1); border: 1px solid rgba(255,93,108,.35); color: #ffc7cd; }
+.keys { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
+.keys h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.1px; margin: 0 0 10px; }
+.keyrow { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 8px 0; color: #c9d2ea; }
+.key {
+  min-width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-weight: 700;
+  background: #0d1428; border: 1px solid var(--line); font-size: 13px; color: var(--text); padding: 0 6px;
+}
+.stages { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
+@media (max-width: 520px) { .stages { grid-template-columns: repeat(2, 1fr); } }
+.stage {
+  position: relative; padding: 14px; border-radius: 14px; background: #0d1428; border: 1px solid var(--line);
+  transition: border-color .25s, background .25s, transform .25s;
+}
+.stage .n { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.stage .t { font-size: 15px; font-weight: 600; margin-top: 4px; }
+.stage .s { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+.stage.active { border-color: var(--accent); background: rgba(91,140,255,.08); transform: translateY(-2px); }
+.stage.active .s { color: #b9ccff; }
+.stage.done { border-color: rgba(47,214,123,.5); background: rgba(47,214,123,.06); }
+.stage.done .s { color: #9eeec2; }
+.stage.fail { animation: shake .4s; border-color: var(--bad); }
+@keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.timeline { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.timeline li {
+  display: grid; grid-template-columns: 70px 12px 1fr; gap: 12px; align-items: start;
+  padding: 10px 0; border-bottom: 1px dashed var(--line); font-size: 14px; animation: rise .3s ease-out;
+}
+.timeline li:last-child { border-bottom: 0; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.timeline time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
+.timeline .mark { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--accent); }
+.mark.otp_ok, .mark.language, .mark.audio, .mark.forward { background: var(--ok); }
+.mark.otp_fail, .mark.invalid { background: var(--warn); }
+.mark.ended { background: var(--muted); }
+.mark.dial { background: var(--accent-2); }
+.empty { color: var(--muted); font-size: 14px; padding: 18px 0; text-align: center; }
+footer { margin-top: 26px; color: var(--muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>
+      </div>
+      <div>
+        <h1>InspireWorks Voice Console</h1>
+        <p>OTP-secured multi-level IVR on the Plivo Voice API</p>
+      </div>
+    </div>
+    <span class="pill" id="status"><span class="dot"></span><span id="status-text">Idle</span></span>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Start a demo call</h2>
+      <form id="call-form">
+        <label for="to">Number to call</label>
+        <input id="to" name="to" value="{{ default_to }}" placeholder="+91XXXXXXXXXX" autocomplete="tel" required>
+        <button type="submit" id="call-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></svg>
+          <span id="call-label">Call me</span>
+        </button>
+      </form>
+      <p class="from">Calling from <b>{{ plivo_number }}</b></p>
+      <div class="notice" id="notice"></div>
+
+      <div class="keys">
+        <h3>Keypad guide</h3>
+        <div class="keyrow"><span class="key">DDMM</span> Enter your 4-digit OTP</div>
+        <div class="keyrow"><span class="key">1</span> English <span class="key">2</span> Español</div>
+        <div class="keyrow"><span class="key">1</span> Audio message <span class="key">2</span> Live associate</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Live call flow</h2>
+      <div class="stages">
+        <div class="stage" data-stage="call"><div class="n">Step 1</div><div class="t">Call</div><div class="s">Waiting</div></div>
+        <div class="stage" data-stage="otp"><div class="n">Step 2</div><div class="t">OTP</div><div class="s"></div></div>
+        <div class="stage" data-stage="language"><div class="n">Level 1</div><div class="t">Language</div><div class="s"></div></div>
+        <div class="stage" data-stage="action"><div class="n">Level 2</div><div class="t">Action</div><div class="s"></div></div>
+      </div>
+      <h2>Timeline</h2>
+      <ul class="timeline" id="timeline"><li class="empty" id="empty">No call activity yet. Start a call to see each step live.</li></ul>
+    </section>
+  </div>
+
+  <footer>Webhooks are verified with Plivo request signatures &middot; This console is only reachable from this machine</footer>
+</div>
+
+<script>
+const form = document.getElementById("call-form");
+const button = document.getElementById("call-btn");
+const label = document.getElementById("call-label");
+const notice = document.getElementById("notice");
+const list = document.getElementById("timeline");
+const statusPill = document.getElementById("status");
+const statusText = document.getElementById("status-text");
+const stages = Object.fromEntries([...document.querySelectorAll(".stage")].map(el => [el.dataset.stage, el]));
+let lastId = 0;
+
+function setStage(name, state, text) {
+  const el = stages[name];
+  el.classList.remove("active", "done", "fail");
+  if (state) el.classList.add(state);
+  if (text !== undefined) el.querySelector(".s").textContent = text;
+}
+
+function resetStages() {
+  setStage("call", null, "Waiting");
+  setStage("otp", null, "");
+  setStage("language", null, "");
+  setStage("action", null, "");
+}
+
+function setStatus(text, live) {
+  statusText.textContent = text;
+  statusPill.classList.toggle("live", live);
+}
+
+function flashFail(name, text) {
+  setStage(name, "active", text);
+  const el = stages[name];
+  void el.offsetWidth;
+  el.classList.add("fail");
+}
+
+function applyEvent(event) {
+  switch (event.kind) {
+    case "answered":
+      resetStages();
+      setStage("call", "done", "Answered");
+      setStage("otp", "active", "Awaiting digits");
+      setStatus("Call in progress", true);
+      break;
+    case "otp_fail":
+      flashFail("otp", "Incorrect, retrying");
+      break;
+    case "otp_ok":
+      setStage("otp", "done", "Verified");
+      setStage("language", "active", "Choosing");
+      break;
+    case "language":
+      setStage("language", "done", event.message.split(": ")[1] || "Selected");
+      setStage("action", "active", "Choosing");
+      break;
+    case "audio":
+      setStage("action", "done", "Audio played");
+      break;
+    case "forward":
+      setStage("action", "done", "Forwarded");
+      break;
+    case "ended":
+      setStatus("Call ended", false);
+      break;
+  }
+}
+
+function addToTimeline(event) {
+  document.getElementById("empty")?.remove();
+  const item = document.createElement("li");
+  const time = document.createElement("time");
+  time.textContent = new Date(event.at * 1000).toLocaleTimeString([], { hour12: false });
+  const mark = document.createElement("span");
+  mark.className = "mark " + event.kind;
+  const text = document.createElement("span");
+  text.textContent = event.message;
+  item.append(time, mark, text);
+  list.prepend(item);
+}
+
+async function poll() {
+  try {
+    const response = await fetch(`/api/events?after=${lastId}`);
+    const data = await response.json();
+    for (const event of data.events) {
+      lastId = event.id;
+      addToTimeline(event);
+      applyEvent(event);
+    }
+  } catch (error) {
+    setStatus("Server unreachable", false);
+  } finally {
+    setTimeout(poll, 1000);
+  }
+}
+
+form.addEventListener("submit", async (submitEvent) => {
+  submitEvent.preventDefault();
+  button.disabled = true;
+  label.textContent = "Dialing...";
+  notice.className = "notice";
+  try {
+    const response = await fetch("/api/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: document.getElementById("to").value }),
+    });
+    const data = await response.json();
+    if (data.ok) {
+      resetStages();
+      setStage("call", "active", "Ringing");
+      setStatus("Ringing " + data.to, true);
+      notice.textContent = "Calling " + data.to + ". Pick up to begin.";
+      notice.className = "notice ok";
+    } else {
+      notice.textContent = data.error;
+      notice.className = "notice bad";
+    }
+  } catch (error) {
+    notice.textContent = "Could not reach the server.";
+    notice.className = "notice bad";
+  } finally {
+    button.disabled = false;
+    label.textContent = "Call me";
+  }
+});
+
+poll();
+</script>
+</body>
+</html>

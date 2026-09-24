@@ -4,11 +4,13 @@ import hmac
 import logging
 import os
 import threading
+import time
+from collections import deque
 from functools import wraps
 from typing import Iterable, Optional
 from urllib.parse import urlencode
 
-from flask import Flask, Response, abort, jsonify, render_template_string, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 from plivo import plivoxml
 from plivo.utils.signature_v3 import validate_v3_signature
 
@@ -19,6 +21,7 @@ from config import Config, ConfigError, load_config, normalize_number
 log = logging.getLogger("ivr")
 
 LANGUAGE_BY_DIGIT = {"1": "en", "2": "es"}
+LANGUAGE_NAMES = {"en": "English", "es": "Spanish"}
 
 
 class CallSessions:
@@ -50,6 +53,23 @@ class CallSessions:
     def end(self, call_uuid: str) -> None:
         with self._lock:
             self._calls.pop(call_uuid, None)
+
+
+class CallTimeline:
+    def __init__(self, limit: int = 100) -> None:
+        self._lock = threading.Lock()
+        self._events: deque = deque(maxlen=limit)
+        self._counter = 0
+
+    def add(self, call_uuid: str, kind: str, message: str) -> None:
+        with self._lock:
+            self._counter += 1
+            self._events.append({"id": self._counter, "call": call_uuid, "kind": kind,
+                                 "message": message, "at": time.time()})
+
+    def since(self, last_id: int) -> list:
+        with self._lock:
+            return [event for event in self._events if event["id"] > last_id]
 
 
 def xml(response: plivoxml.ResponseElement) -> Response:
@@ -88,7 +108,9 @@ def create_app(config: Optional[Config] = None) -> Flask:
     config = config or load_config()
     app = Flask(__name__)
     sessions = CallSessions()
+    timeline = CallTimeline()
     app.extensions["call_sessions"] = sessions
+    app.extensions["call_timeline"] = timeline
 
     def url(path: str, **query: str) -> str:
         full = f"{config.base_url}{path}"
@@ -100,9 +122,20 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def digits() -> str:
         return request.values.get("Digits", "").strip()
 
+    def track(kind: str, message: str) -> None:
+        log.info("[%s] %s", call_uuid(), message)
+        timeline.add(call_uuid(), kind, message)
+
     def current_lang() -> Optional[str]:
         lang = request.args.get("lang")
         return lang if lang in prompts.TEXT else None
+
+    @app.before_request
+    def keep_dashboard_local():
+        is_dashboard = request.path == "/" or request.path.startswith("/api/")
+        if is_dashboard and request.headers.get("X-Forwarded-For"):
+            abort(404)
+        return None
 
     @app.before_request
     def verify_plivo_signature():
@@ -140,8 +173,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
     @app.post("/ivr/answer")
     def answer():
         sessions.start(call_uuid())
-        log.info("[%s] Call answered (from=%s, to=%s)", call_uuid(),
-                 request.values.get("From"), request.values.get("To"))
+        track("answered", "Call answered, asking for OTP")
         return xml(otp_menu(preface=prompts.WELCOME))
 
     @app.post("/ivr/otp/prompt")
@@ -154,14 +186,13 @@ def create_app(config: Optional[Config] = None) -> Flask:
         attempt = sessions.record_otp_attempt(call_uuid())
         if hmac.compare_digest(entered.encode(), config.otp.encode()):
             sessions.authenticate(call_uuid())
-            log.info("[%s] OTP correct (attempt %d)", call_uuid(), attempt)
+            track("otp_ok", f"OTP verified on attempt {attempt}")
             response = plivoxml.ResponseElement()
             response.add(speak(prompts.OTP_OK))
             response.add(redirect(url("/ivr/language/prompt")))
             return xml(response)
 
-        log.info("[%s] OTP incorrect (attempt %d, %d digits entered)",
-                 call_uuid(), attempt, len(entered))
+        track("otp_fail", f"Incorrect OTP on attempt {attempt}, re-prompting")
         return xml(otp_menu(preface=prompts.OTP_WRONG))
 
     def language_menu(preface: Optional[str] = None) -> plivoxml.ResponseElement:
@@ -180,10 +211,10 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def language_select():
         lang = LANGUAGE_BY_DIGIT.get(digits())
         if lang is None:
-            log.info("[%s] Invalid language option %r", call_uuid(), digits())
+            track("invalid", f"Invalid language option {digits() or 'none'}, repeating menu")
             return xml(language_menu(preface=prompts.INVALID))
 
-        log.info("[%s] Language selected: %s", call_uuid(), lang)
+        track("language", f"Language selected: {LANGUAGE_NAMES[lang]}")
         response = plivoxml.ResponseElement()
         response.add(speak(prompts.TEXT[lang]["selected"], lang))
         response.add(redirect(url("/ivr/menu/prompt", lang=lang)))
@@ -220,7 +251,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         response = plivoxml.ResponseElement()
 
         if choice == "1":
-            log.info("[%s] Playing audio message (%s)", call_uuid(), lang)
+            track("audio", "Playing audio message")
             response.add(speak(text["audio_intro"], lang))
             response.add(plivoxml.PlayElement(config.audio_url))
             response.add(speak(text["back_to_menu"], lang))
@@ -228,7 +259,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
             return xml(response)
 
         if choice == "2":
-            log.info("[%s] Forwarding to associate %s", call_uuid(), config.associate_number)
+            track("forward", "Forwarding call to live associate")
             response.add(speak(text["connecting"], lang))
             dial = plivoxml.DialElement(
                 action=url("/ivr/dial/status", lang=lang),
@@ -241,7 +272,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
             response.add(dial)
             return xml(response)
 
-        log.info("[%s] Invalid menu option %r", call_uuid(), choice)
+        track("invalid", f"Invalid menu option {choice or 'none'}, repeating menu")
         return xml(action_menu(lang, preface=text["invalid"]))
 
     @app.post("/ivr/dial/status")
@@ -250,7 +281,7 @@ def create_app(config: Optional[Config] = None) -> Flask:
         lang = current_lang() or "en"
         text = prompts.TEXT[lang]
         status = request.values.get("DialStatus", "")
-        log.info("[%s] Dial to associate finished: %s", call_uuid(), status)
+        track("dial", f"Associate call finished: {status or 'unknown'}")
 
         response = plivoxml.ResponseElement()
         if status == "completed":
@@ -263,8 +294,8 @@ def create_app(config: Optional[Config] = None) -> Flask:
 
     @app.post("/ivr/hangup")
     def hangup():
-        log.info("[%s] Call ended (cause=%s, duration=%ss)", call_uuid(),
-                 request.values.get("HangupCause"), request.values.get("Duration"))
+        track("ended", f"Call ended ({request.values.get('HangupCause', 'unknown')}, "
+                       f"{request.values.get('Duration', '0')}s)")
         sessions.end(call_uuid())
         return "OK", 200
 
@@ -272,41 +303,27 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def health():
         return jsonify(status="ok")
 
-    @app.route("/", methods=["GET", "POST"])
-    def index():
-        message, is_error = None, False
-        if request.method == "POST":
-            try:
-                to_number = normalize_number(request.form.get("to") or config.my_number or "")
-                request_uuid = place_call(config, to_number)
-                message = f"Calling {to_number}. Request UUID: {request_uuid}"
-            except (ConfigError, CallError) as exc:
-                message, is_error = str(exc), True
-        return render_template_string(INDEX_HTML, message=message, is_error=is_error,
-                                      default_to=config.my_number or "")
+    @app.get("/")
+    def dashboard():
+        return render_template("dashboard.html", default_to=config.my_number or "",
+                                      plivo_number=config.plivo_number)
+
+    @app.post("/api/call")
+    def api_call():
+        payload = request.get_json(silent=True) or {}
+        try:
+            to_number = normalize_number(payload.get("to") or config.my_number or "")
+            request_uuid = place_call(config, to_number)
+        except (ConfigError, CallError) as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        return jsonify(ok=True, to=to_number, request_uuid=request_uuid)
+
+    @app.get("/api/events")
+    def api_events():
+        last_id = request.args.get("after", default=0, type=int)
+        return jsonify(events=timeline.since(last_id))
 
     return app
-
-
-INDEX_HTML = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>InspireWorks IVR Demo</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
- body{font-family:system-ui,sans-serif;max-width:420px;margin:60px auto;padding:0 16px;color:#222}
- input,button{width:100%;padding:10px;margin-top:8px;font-size:16px;box-sizing:border-box}
- button{background:#1a73e8;color:#fff;border:0;border-radius:6px;cursor:pointer}
- .msg{margin-top:16px;padding:10px;border-radius:6px;background:#e6f4ea}
- .err{background:#fce8e6}
-</style></head><body>
-<h2>InspireWorks IVR Demo</h2>
-<p>Places an outbound call via the Plivo Voice API.</p>
-<form method="post">
-  <label for="to">Phone number to call</label>
-  <input id="to" name="to" value="{{ default_to }}" placeholder="+91XXXXXXXXXX" required>
-  <button type="submit">Call me</button>
-</form>
-{% if message %}<div class="msg {{ 'err' if is_error }}">{{ message }}</div>{% endif %}
-</body></html>"""
 
 
 if __name__ == "__main__":

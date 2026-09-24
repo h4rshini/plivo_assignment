@@ -32,7 +32,8 @@ Each step is a webhook that returns Plivo XML. `<GetInput inputType="dtmf">` col
 
 | File | Purpose |
 |---|---|
-| `app.py` | Flask webhook server: IVR state machine, Plivo signature validation, trigger web page |
+| `app.py` | Flask webhook server: IVR state machine, Plivo signature validation, Voice Console API |
+| `templates/dashboard.html` | Voice Console: starts calls and shows live call progress |
 | `calls.py` | Starts the outbound call with the Plivo REST API |
 | `make_call.py` | CLI trigger with a pre-flight check that the webhook server is reachable |
 | `config.py` | Loads and validates settings from `.env`; holds the hardcoded OTP |
@@ -45,6 +46,8 @@ Each step is a webhook that returns Plivo XML. `<GetInput inputType="dtmf">` col
 - **OTP enforced on the server.** Per-call state (keyed by `CallUUID`) records whether the caller passed OTP. Menu endpoints redirect unauthenticated calls back to the OTP prompt, so the IVR can't be skipped by calling a later URL directly. The OTP is compared in constant time (`hmac.compare_digest`).
 - **Stateless language handling.** The chosen language travels in the webhook URL (`?lang=es`), and Spanish prompts use Spanish TTS (`es-US`).
 - **Graceful failure.** Invalid keys and timeouts repeat the prompt. If the associate is busy or doesn't answer, the caller hears a message and returns to the menu.
+- **Local-only console.** `/` and `/api/*` return 404 for requests that arrive through the tunnel (`X-Forwarded-For` present), so the public URL can't be used to place calls. Only the `/ivr/*` webhooks are exposed.
+- **Live call timeline.** Every IVR step is recorded in a bounded in-memory buffer (`CallTimeline`), which the console polls.
 - **Phone number normalization.** Local Indian formats (`02264236412`, `98765 43210`) are converted to E.164.
 
 ## Setup
@@ -86,7 +89,7 @@ And in a third:
 python make_call.py
 python make_call.py --to +91XXXXXXXXXX
 ```
-Or open `http://127.0.0.1:8000/` and click **Call me**.
+Or open the **Voice Console** at `http://127.0.0.1:8000/` and click **Call me**. While the call is in progress, the console shows each stage (Call → OTP → Language → Action) and a live timeline of every keypress, updated every second from `/api/events`.
 
 ## Test
 
