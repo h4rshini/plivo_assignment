@@ -4,6 +4,7 @@ import hmac
 import logging
 import os
 import threading
+from functools import wraps
 from typing import Iterable, Optional
 from urllib.parse import urlencode
 
@@ -14,6 +15,8 @@ import prompts
 from config import Config, load_config
 
 log = logging.getLogger("ivr")
+
+LANGUAGE_BY_DIGIT = {"1": "en", "2": "es"}
 
 
 class CallSessions:
@@ -95,6 +98,21 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def digits() -> str:
         return request.values.get("Digits", "").strip()
 
+    def current_lang() -> Optional[str]:
+        lang = request.args.get("lang")
+        return lang if lang in prompts.TEXT else None
+
+    def require_auth(view):
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            if not sessions.is_authenticated(call_uuid()):
+                log.warning("[%s] Unauthenticated request to %s -> OTP", call_uuid(), request.path)
+                response = plivoxml.ResponseElement()
+                response.add(redirect(url("/ivr/otp/prompt")))
+                return xml(response)
+            return view(*args, **kwargs)
+        return wrapper
+
     def otp_menu(preface: Optional[str] = None) -> plivoxml.ResponseElement:
         elements = [speak(preface)] if preface else []
         elements.append(speak(prompts.OTP_PROMPT))
@@ -120,12 +138,109 @@ def create_app(config: Optional[Config] = None) -> Flask:
             log.info("[%s] OTP correct (attempt %d)", call_uuid(), attempt)
             response = plivoxml.ResponseElement()
             response.add(speak(prompts.OTP_OK))
-            response.add(plivoxml.HangupElement())
+            response.add(redirect(url("/ivr/language/prompt")))
             return xml(response)
 
         log.info("[%s] OTP incorrect (attempt %d, %d digits entered)",
                  call_uuid(), attempt, len(entered))
         return xml(otp_menu(preface=prompts.OTP_WRONG))
+
+    def language_menu(preface: Optional[str] = None) -> plivoxml.ResponseElement:
+        elements = [speak(preface)] if preface else []
+        elements += [speak(prompts.LANGUAGE_PROMPT_EN, "en"),
+                     speak(prompts.LANGUAGE_PROMPT_ES, "es")]
+        return gather(url("/ivr/language/select"), 1, elements, url("/ivr/language/prompt"))
+
+    @app.post("/ivr/language/prompt")
+    @require_auth
+    def language_prompt():
+        return xml(language_menu())
+
+    @app.post("/ivr/language/select")
+    @require_auth
+    def language_select():
+        lang = LANGUAGE_BY_DIGIT.get(digits())
+        if lang is None:
+            log.info("[%s] Invalid language option %r", call_uuid(), digits())
+            return xml(language_menu(preface=prompts.INVALID))
+
+        log.info("[%s] Language selected: %s", call_uuid(), lang)
+        response = plivoxml.ResponseElement()
+        response.add(speak(prompts.TEXT[lang]["selected"], lang))
+        response.add(redirect(url("/ivr/menu/prompt", lang=lang)))
+        return xml(response)
+
+    def action_menu(lang: str, preface: Optional[str] = None) -> plivoxml.ResponseElement:
+        text = prompts.TEXT[lang]
+        elements = [speak(preface, lang)] if preface else []
+        elements.append(speak(text["menu"], lang))
+        return gather(url("/ivr/menu/select", lang=lang), 1, elements,
+                      url("/ivr/menu/prompt", lang=lang), lang)
+
+    def back_to_language_menu() -> Response:
+        response = plivoxml.ResponseElement()
+        response.add(redirect(url("/ivr/language/prompt")))
+        return xml(response)
+
+    @app.post("/ivr/menu/prompt")
+    @require_auth
+    def menu_prompt():
+        lang = current_lang()
+        if lang is None:
+            return back_to_language_menu()
+        return xml(action_menu(lang))
+
+    @app.post("/ivr/menu/select")
+    @require_auth
+    def menu_select():
+        lang = current_lang()
+        if lang is None:
+            return back_to_language_menu()
+        text = prompts.TEXT[lang]
+        choice = digits()
+        response = plivoxml.ResponseElement()
+
+        if choice == "1":
+            log.info("[%s] Playing audio message (%s)", call_uuid(), lang)
+            response.add(speak(text["audio_intro"], lang))
+            response.add(plivoxml.PlayElement(config.audio_url))
+            response.add(speak(text["back_to_menu"], lang))
+            response.add(redirect(url("/ivr/menu/prompt", lang=lang)))
+            return xml(response)
+
+        if choice == "2":
+            log.info("[%s] Forwarding to associate %s", call_uuid(), config.associate_number)
+            response.add(speak(text["connecting"], lang))
+            dial = plivoxml.DialElement(
+                action=url("/ivr/dial/status", lang=lang),
+                method="POST",
+                caller_id=config.plivo_number,
+                timeout=30,
+                redirect=True,
+            )
+            dial.add(plivoxml.NumberElement(config.associate_number))
+            response.add(dial)
+            return xml(response)
+
+        log.info("[%s] Invalid menu option %r", call_uuid(), choice)
+        return xml(action_menu(lang, preface=text["invalid"]))
+
+    @app.post("/ivr/dial/status")
+    @require_auth
+    def dial_status():
+        lang = current_lang() or "en"
+        text = prompts.TEXT[lang]
+        status = request.values.get("DialStatus", "")
+        log.info("[%s] Dial to associate finished: %s", call_uuid(), status)
+
+        response = plivoxml.ResponseElement()
+        if status == "completed":
+            response.add(speak(text["goodbye"], lang))
+            response.add(plivoxml.HangupElement())
+        else:
+            response.add(speak(text["unavailable"], lang))
+            response.add(redirect(url("/ivr/menu/prompt", lang=lang)))
+        return xml(response)
 
     @app.post("/ivr/hangup")
     def hangup():
