@@ -8,12 +8,13 @@ from functools import wraps
 from typing import Iterable, Optional
 from urllib.parse import urlencode
 
-from flask import Flask, Response, abort, jsonify, request
+from flask import Flask, Response, abort, jsonify, render_template_string, request
 from plivo import plivoxml
 from plivo.utils.signature_v3 import validate_v3_signature
 
 import prompts
-from config import Config, load_config
+from calls import CallError, place_call
+from config import Config, ConfigError, load_config, normalize_number
 
 log = logging.getLogger("ivr")
 
@@ -271,7 +272,41 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def health():
         return jsonify(status="ok")
 
+    @app.route("/", methods=["GET", "POST"])
+    def index():
+        message, is_error = None, False
+        if request.method == "POST":
+            try:
+                to_number = normalize_number(request.form.get("to") or config.my_number or "")
+                request_uuid = place_call(config, to_number)
+                message = f"Calling {to_number}. Request UUID: {request_uuid}"
+            except (ConfigError, CallError) as exc:
+                message, is_error = str(exc), True
+        return render_template_string(INDEX_HTML, message=message, is_error=is_error,
+                                      default_to=config.my_number or "")
+
     return app
+
+
+INDEX_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>InspireWorks IVR Demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+ body{font-family:system-ui,sans-serif;max-width:420px;margin:60px auto;padding:0 16px;color:#222}
+ input,button{width:100%;padding:10px;margin-top:8px;font-size:16px;box-sizing:border-box}
+ button{background:#1a73e8;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ .msg{margin-top:16px;padding:10px;border-radius:6px;background:#e6f4ea}
+ .err{background:#fce8e6}
+</style></head><body>
+<h2>InspireWorks IVR Demo</h2>
+<p>Places an outbound call via the Plivo Voice API.</p>
+<form method="post">
+  <label for="to">Phone number to call</label>
+  <input id="to" name="to" value="{{ default_to }}" placeholder="+91XXXXXXXXXX" required>
+  <button type="submit">Call me</button>
+</form>
+{% if message %}<div class="msg {{ 'err' if is_error }}">{{ message }}</div>{% endif %}
+</body></html>"""
 
 
 if __name__ == "__main__":
