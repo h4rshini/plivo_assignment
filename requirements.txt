@@ -1,0 +1,5 @@
+plivo>=4.60
+flask>=3.0
+python-dotenv>=1.0
+requests>=2.31
+pytest>=8.0
