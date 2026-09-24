@@ -1,15 +1,11 @@
-# Secrets - never commit
 .env
 *.docx
-
-# Python
+_reference/
 __pycache__/
 *.pyc
 .venv/
 venv/
 .pytest_cache/
-
-# OS / editor
 .DS_Store
 .vscode/
 .idea/
