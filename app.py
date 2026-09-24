@@ -8,8 +8,9 @@ from functools import wraps
 from typing import Iterable, Optional
 from urllib.parse import urlencode
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, abort, jsonify, request
 from plivo import plivoxml
+from plivo.utils.signature_v3 import validate_v3_signature
 
 import prompts
 from config import Config, load_config
@@ -101,6 +102,23 @@ def create_app(config: Optional[Config] = None) -> Flask:
     def current_lang() -> Optional[str]:
         lang = request.args.get("lang")
         return lang if lang in prompts.TEXT else None
+
+    @app.before_request
+    def verify_plivo_signature():
+        if not request.path.startswith("/ivr/") or not config.validate_signature:
+            return None
+        signature = request.headers.get("X-Plivo-Signature-V3")
+        nonce = request.headers.get("X-Plivo-Signature-V3-Nonce")
+        if not signature or not nonce:
+            log.warning("Rejected %s: missing Plivo signature headers", request.path)
+            abort(403)
+        uri = config.base_url + request.full_path.rstrip("?")
+        params = request.form.to_dict() if request.method == "POST" else {}
+        if not validate_v3_signature(request.method, uri, nonce, config.auth_token,
+                                     signature, params):
+            log.warning("Rejected %s: invalid Plivo signature", request.path)
+            abort(403)
+        return None
 
     def require_auth(view):
         @wraps(view)
